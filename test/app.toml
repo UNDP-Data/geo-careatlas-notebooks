@@ -1,0 +1,9 @@
+# Managed by CareAtlas. Edit through the app settings page where possible.
+title = "test"
+description = "test"
+visibility = "restricted"
+
+[members]
+owners = ["Thuhaa"]
+editors = []
+viewers = []
