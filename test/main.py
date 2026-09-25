@@ -9,12 +9,31 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import marimo as mo
+
     return (mo,)
 
 
 @app.cell
 def _(mo):
-    mo.md('# Overview')
+    mo.md("""
+    # Overview
+    """)
+    return
+
+
+@app.function
+def load_data():
+    print("Create data")
+
+
+@app.cell
+def _():
+    load_data()
+    return
+
+
+@app.cell
+def _():
     return
 
 
