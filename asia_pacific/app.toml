@@ -1,0 +1,9 @@
+# Managed by CareAtlas. Edit through the app settings page where possible.
+title = "Asia Pacific"
+description = "This is the Asia Pacific Test App"
+visibility = "restricted"
+
+[members]
+owners = ["Thuhaa"]
+editors = []
+viewers = []
