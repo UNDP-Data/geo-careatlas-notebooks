@@ -5,5 +5,5 @@ visibility = "restricted"
 
 [members]
 owners = ["testowner"]
-editors = ["testviewer"]
-viewers = ["Thuhaa"]
+editors = ["Thuhaa"]
+viewers = []
