@@ -4,6 +4,6 @@ description = "This is the Latin America App"
 visibility = "restricted"
 
 [members]
-owners = ["Thuhaa"]
-editors = []
-viewers = []
+owners = ["testowner"]
+editors = ["testviewer"]
+viewers = ["Thuhaa"]
