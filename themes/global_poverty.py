@@ -4,13 +4,14 @@
 
 import marimo
 
-__generated_with = "0.20.1"
+__generated_with = "0.25.1"
 app = marimo.App(width="medium", auto_download=["html"])
 
 
 @app.cell
 def menu():
     import marimo as mo
+
     return (mo,)
 
 
@@ -26,7 +27,11 @@ def _(mo):
     return
 
 
+@app.cell
+def _():
+    import os
 
+    return
 
 
 if __name__ == "__main__":
