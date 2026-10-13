@@ -65,6 +65,8 @@ def _(mo):
 
 @app.cell
 def _():
+    import os
+
     return
 
 
