@@ -71,9 +71,18 @@ def _():
     return
 
 
-@app.cell
-def _():
-    print("here")
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    This is a demo cell to demononstrate Marimo MD
+    ##. A subtittle
+
+    # Title
+
+
+    ### Underlined subtitle
+    ----
+    """)
     return
 
 
