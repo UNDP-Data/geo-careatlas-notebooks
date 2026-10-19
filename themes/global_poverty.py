@@ -1,6 +1,4 @@
-"""
- This notebok allows exploring global poverty patterns at various spatial scales
-"""
+
 
 import marimo
 
