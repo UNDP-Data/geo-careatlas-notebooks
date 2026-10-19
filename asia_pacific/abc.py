@@ -14,7 +14,7 @@ def _():
 @app.cell
 def _(mo):
     mo.md("""
-    # 🚀 It is not that sime bro
+    # 🚀 It is not that simple bro...yet
     """)
     return
 
