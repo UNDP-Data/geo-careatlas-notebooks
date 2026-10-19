@@ -8,6 +8,14 @@ __generated_with = "0.25.1"
 app = marimo.App(width="medium", auto_download=["html"])
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    So far not much is done here
+    """)
+    return
+
+
 @app.cell
 def menu():
     import marimo as mo
