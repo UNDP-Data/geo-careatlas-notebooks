@@ -57,7 +57,28 @@ def _():
     """
     )
 
-    raw_data_text = mo.md("*(Your GeoParquet dataframe goes here)*")
+    raw_data_text = mo.md(
+    f"""
+    #1. {mo.icon('arcticons:weather-forecast')} Climate data
+
+    ---
+
+    When it comes to 
+
+
+    """)
+
+
+
+
+
+
+
+
+
+
+
+
     tabs = mo.ui.tabs(
         {
             f"{mo.icon('pajamas:overview')} Overview": overview_text,
