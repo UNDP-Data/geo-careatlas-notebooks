@@ -4,6 +4,14 @@ __generated_with = "0.25.2"
 app = marimo.App(width="medium")
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # 🌍 Understanding the climate modeling approach
+    """)
+    return
+
+
 @app.cell
 def _():
     import marimo as mo
@@ -13,7 +21,7 @@ def _():
 
     <hr style="height: 3px; background-color: red; border: none; opacity: 0.5; margin-top: 25px;">
 
-    # 🌍 Understanding Our Climate Modeling Approach
+
 
     When working with climate change, one is almost always interested in **climate variables** (precipitation, temperature, etc) in **future** (forecasts). This is because the forecasts encompass variations in the spatio-temporal distribution of the climate variables an dthese are directly responsible for affecting the climate, or the climate chnage impact upon our world.  
 
@@ -86,7 +94,7 @@ def _():
         }
     )
     tabs
-    return
+    return (mo,)
 
 
 if __name__ == "__main__":
