@@ -4,10 +4,10 @@ __generated_with = "0.25.2"
 app = marimo.App(width="medium")
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(mo):
-    mo.md(r"""
-    # 🌍 Understanding the climate modeling approach
+    mo.md(rf"""
+ 
     """)
     return
 
@@ -15,9 +15,12 @@ def _(mo):
 @app.cell
 def _():
     import marimo as mo
-
+    """
+    This notebook provides users with in depth know how on cilmate modeling.
+    """
     overview_text = mo.md(
     """
+    # 🌍 Understanding the climate modeling approach
 
     <hr style="height: 3px; background-color: red; border: none; opacity: 0.5; margin-top: 25px;">
 
