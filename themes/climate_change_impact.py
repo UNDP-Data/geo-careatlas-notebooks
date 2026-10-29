@@ -6,10 +6,13 @@ app = marimo.App(width="medium")
 
 @app.cell
 def _():
-    import marimo as mo
     """
     This notebook provides users with in depth know how on cilmate modeling.
     """
+
+    import marimo as mo
+
+
     overview_text = mo.md(
     """
     # 🌍 Understanding the climate modeling approach
