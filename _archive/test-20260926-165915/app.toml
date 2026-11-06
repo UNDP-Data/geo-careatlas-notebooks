@@ -1,9 +1,0 @@
-# Managed by CareAtlas. Edit through the app settings page where possible.
-title = "test"
-description = ""
-visibility = "restricted"
-
-[members]
-owners = ["Thuhaa"]
-editors = []
-viewers = []
