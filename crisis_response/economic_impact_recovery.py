@@ -26,6 +26,7 @@ def _(mo):
     ### 1.2 The Approach
 
     This notebook provides a generic, scalable pipeline to evaluate the impact of early recovery programs. It operates in three distinct stages:
+
     1.2.1 **Data Fetch & Preparation (The I/O Layer):** We ingest cloud-optimized administrative boundaries, project coordinates, and monthly satellite observations (like NASA's VIIRS nighttime lights).
 
     1.2.2 **Geospatial Analysis (The Transformation Layer):** We create spatial "donut" buffers around the project sites. For example, we might define areas within 3 km of a project as "Treated" (they received help) and areas 3 to 8 km away as "Control" (they did not, but share similar local geography).
@@ -43,6 +44,114 @@ def _(mo):
     - **Correlation vs. Causation:** In crisis environments, many agencies operate simultaneously. While spatial buffering isolates local effects, it is difficult to prove that a recovery spike was caused solely by one specific organization's project.
     - **Spillover Effects:** Humanitarian aid delivered to a "Treated" zone might economically benefit the nearby "Control" zone through shared markets, which can dilute the measured difference between the two.
     - **Sensor Limitations:** Nighttime lights are an excellent proxy for economic activity, but they can be distorted by seasonal factors (like snow or harvest cycles), cloud cover, or heavily damaged electrical grids. Physical reconstruction (like clearing debris) can sometimes happen months before the electricity comes back on.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 2. Data
+    ---
+
+    - Administrative boundaries
+
+    Define our fundamental unit of analysis. Satellite pixels (like nightlights or radar) are aggregated within these shapes to calculate local economic averages. Furthermore, we use the geographic centroid of these polygons to measure the distance to UNDP intervention sites, which dictates whether an area is flagged as "Treated" or "Control.". While there are many public sources of administrative boundaries that one could use for this purpose, we choose the Comprehensive Global Administrative Zones (CGAZ) by geoBoundaries, a standardized dataset of political and dministrative boundaries. This dataset offers two major advantages:  polygon edges are simplified to reduce file sizes, and disputed territories are unified using standard definitions (U.S. Department of State) to prevent overlapping or missing data artifacts. This makes the dataset analysis ready.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    import os
+    import geopandas as gpd
+    from pyogrio import read_dataframe, write_dataframe
+    import h3.api.basic_int as h3
+    import leafmap
+
+    def fetch_admin_boundaries(bbox: tuple = None, admin_level: int = 0, iso3_country_code:str = None, dest_path:str=None, h3id_precision: int = 7) -> gpd.GeoDataFrame:
+        """
+        Fetches administrative boundaries via VSI using FlatGeobuf spatial indexing.
+        Filters invalid ISO codes, calculates centroids, and maps H3 indices.
+        """
+
+        if os.path.exists(dest_path):
+            print(f'reading alreday downloaded local file')
+            return read_dataframe(dest_path)
+
+
+        # 1. Fetch via VSI utilizing the FlatGeobuf spatial index
+        url = f"/vsicurl/https://undpngddlsgeohubdev01.blob.core.windows.net/admin/cgaz/geoBoundariesCGAZ_ADM{admin_level}.fgb"
+        where_clause = f"iso3 = '{iso3_country_code}'" if iso3_country_code else None
+
+        # engine="pyogrio" passes the bbox directly to the GDAL reader for high-speed streaming
+        gdf = read_dataframe(url, bbox=bbox, where=where_clause)
+        print(gdf.columns.tolist())
+
+        if gdf.empty:
+            raise ValueError(f"No features found in BBOX: {bbox}")
+
+   
+        # 3. Calculate H3 IDs 
+        # GeoPandas handles centroids natively
+        centroids = gdf.to_crs('EPSG:8857').geometry.centroid
+
+        # Map H3 IDs using the centroid coordinates
+        gdf["h3id"] = centroids.apply(
+            lambda pt: h3.latlng_to_cell(lat=pt.y, lng=pt.x, res=h3id_precision) if not pt.is_empty else None
+        )
+
+        # 4. Standardize Name Column
+        source_name_field = f"admin{admin_level}_name"
+        if source_name_field in gdf.columns:
+            gdf["name"] = gdf[source_name_field].fillna("")
+        if dest_path is not None:
+            write_dataframe(gdf,dest_path,promote_to_multi=True,)
+
+        return gdf
+
+    # we define Myanmar's boun ding box in geographic coordinates
+    myanmar_bbox = west, south, east, north = 92.17, 9.53, 101.18, 28.55
+    myanmar_iso3_country_code='MMR'
+    local_admin_path = '/tmp/admin2.fgb'
+    df = None
+    with mo.status.spinner(title="Downloading admin data ...") as _spinner:
+        df = fetch_admin_boundaries(admin_level=2, iso3_country_code=myanmar_iso3_country_code, dest_path=local_admin_path )
+        _spinner.update(f'Downlaoded {len(df)} districts')
+        _spinner.update("Done")
+        
+
+    m = leafmap.Map()
+    m.add_gdf(df, layer_name='admin')
+    m
+
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    - Nighttime lights
+
+    Night time lights data
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 3. Geospatial Analysis
+    ---
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 4. Economic Analysis
+    ---
     """)
     return
 
