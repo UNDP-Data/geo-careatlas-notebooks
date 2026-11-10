@@ -150,6 +150,9 @@ def _(myanmar_bbox, os):
     import h5py
     import pandas as pd
     import rioxarray as rxr
+    from dask.diagnostics import ProgressBar
+    from urllib.parse import urlparse
+    import rasterio
 
     def search_monthly_ntl(bbox: tuple, start_date: str, end_date: str) -> list:
         """
@@ -199,42 +202,30 @@ def _(myanmar_bbox, os):
         Uses rioxarray to seamlessly decode the proprietary NASA HDFEOS grid.
         """
         os.makedirs(download_dir, exist_ok=True)
-    
-        print(f"Downloading {len(granules)} granules to {download_dir}...")
-        local_paths = earthaccess.download(granules, local_path=download_dir)
-        valid_paths = [p for p in local_paths if p is not None and os.path.exists(p)]
-    
+
+        granules_to_download = list()
+        downloaded_files = list()
+        for g in granules:
+            link = g.data_links()[0]
+            plink = urlparse(link)
+            *_, file_name = str(plink.path).split('/')
+            local_file = os.path.join(download_dir, file_name)
+            if os.path.exists(local_file):
+                with rasterio.open(local_file) as _:
+                    downloaded_files.append(local_file)
+                    continue
+            granules_to_download.append(g)
+        
+        if granules_to_download:
+            print(f"Downloading {len(granules_to_download)} granules to {download_dir}...")
+            local_paths = earthaccess.download(granules, local_path=download_dir, show_progress=True)
+            valid_paths = [p for p in local_paths if p is not None and os.path.exists(p)]
+            valid_paths+=downloaded_files
+        else:
+            valid_paths = downloaded_files
         print(f"Successfully secured {len(valid_paths)} local files.")
-        print("Opening and geospatializing HDF5 tiles with rioxarray...")
-    
-        datasets = []
-        for path in valid_paths:
-            # 1. Extract date from filename (e.g., VNP46A3.A2023001.h27v06...)
-            filename = os.path.basename(path)
-            date_str = filename.split(".")[1][1:] # Extracts '2023001' (Year + Day of Year)
-        
-            # VNP46A3 monthly files use the 1st day of the month in their Julian date (e.g. 001 for Jan)
-            time_val = pd.to_datetime(date_str, format="%Y%j")
-        
-            # 2. Target the specific HDF5 subdataset using GDAL syntax
-            gdal_path = f'HDF5:"{path}"://HDFEOS/GRIDS/VNP_Grid_DNB/Data_Fields/{subdataset}'
-            gdal_path = f'HDF5:"{path}"://HDFEOS/GRIDS/VIIRS_Grid_DNB_2d/Data_Fields/{subdataset}'
-        
-            # 3. Open with rioxarray
-            # masked=True automatically applies NASA's fill values (e.g. 65535 -> NaN)
-            da = rxr.open_rasterio(gdal_path, masked=True)
-        
-            # 4. Inject the missing time dimension
-            da = da.expand_dims(time=[time_val])
-            da.name = "nightlights"
-        
-            datasets.append(da)
-        
-        print("Mosaicking spatial tiles and stacking over time...")
-        # combine_by_coords will now succeed
-        ds = xr.combine_by_coords(datasets, combine_attrs="override",)
-    
-        return ds
+        return valid_paths
+
 
     # ==========================================
     # Example Usage:
@@ -246,7 +237,7 @@ def _(myanmar_bbox, os):
         end_date="2024-01-01"
     )
 
-    ntl_dataset = download_and_assemble_ntl(ntl_granules, download_dir='data/ntl')
+    ntl_dataset = download_and_assemble_ntl(ntl_granules, download_dir='/data/ntl')
     return
 
 
