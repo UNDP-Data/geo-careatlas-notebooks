@@ -275,9 +275,9 @@ def _(download_dir, os, pd):
         file_name = f'UNDP_projects_{operating_unit}.csv'
     
         file_path = os.path.join(download_dir, file_name)
-        if os.path.exists(file_path):
-            print(f'Reading already downloaded local file {file_path}')
-            return pd.read_csv(file_path)
+        # if os.path.exists(file_path):
+        #     print(f'Reading already downloaded local file {file_path}')
+        #     return pd.read_csv(file_path)
 
     
         all_projects = {}
@@ -329,6 +329,17 @@ def _(download_dir, os, pd):
                         details = d_resp.json()
                     
                         title = details.get('title') or details.get('project_title') or "No Title"
+                        subnational = details.get('subnational', [])
+                        lats, lons = [], []
+                        for sout in subnational:
+                            if 'lat' in sout and 'lon' in sout:
+                                lons.append(sout['lon'])
+                                lats.append(sout['lat'])
+                        lat = set(lats)
+                        lon = set(lons)
+                        print(p_id, lon, lat)
+                        continue
+                        
                     
                         # Robust description extraction
                         desc_parts = [details.get('description', '') or details.get('project_descr', '')]
@@ -387,7 +398,7 @@ def _(download_dir, os, pd):
     # TEST EXECUTION FOR MYANMAR (MMR)
     # ==========================================
     # We use recent years to keep the test fast
-    test_years = [2023, 2024, 2025, 2026]
+    test_years = [2024, 2025, 2026]
     mmr_projects_df = scrape_undp_api_test(operating_unit="MMR", years=test_years, download_dir=download_dir)
 
     # Display the results in Marimo
