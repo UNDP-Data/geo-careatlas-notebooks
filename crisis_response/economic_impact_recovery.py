@@ -117,7 +117,7 @@ def _(mo):
     # we define Myanmar's boun ding box in geographic coordinates
     myanmar_bbox = west, south, east, north = 92.17, 9.53, 101.18, 28.55
     myanmar_iso3_country_code='MMR'
-    download_dir = '/tmp/data'
+    download_dir = '/data/'
     df = None
     with mo.status.spinner(title="Downloading admin data ...") as _spinner:
         df = fetch_admin_boundaries(admin_level=2, iso3_country_code=myanmar_iso3_country_code, download_dir=download_dir )
@@ -128,7 +128,7 @@ def _(mo):
     m = leafmap.Map()
     m.add_gdf(df, layer_name='admin')
     m
-    return
+    return myanmar_bbox, os
 
 
 @app.cell(hide_code=True)
@@ -136,8 +136,117 @@ def _(mo):
     mo.md(r"""
     - Nighttime lights
 
-    Nighttime lights (NTL) data measures how bright the Earth is in the dark using satellite sensors, Suomi NPP (SNPP), NOAA-20, and NOAA-21 a trio of weather and environmental satellites flying in the same polar orbit, spaced out like buses on a route so they scan every spot on Earth at roughly 1:30 AM and 1:30 PM local time. A polar orbit is a satellite path that loops vertically from the North Pole to the South Pole while the Earth spins sideways underneath it, allowing a single satellite to scan the entire planet like peeling an orange in vertical strips. As the satellites enter the range of Ground Satellite Processing Stations located close to poles the images are downlaoded and forwarded as well as processed further into products at the vendors data centeres. For the purpose of this study we will use monthly aggregates directky from NASA Eartaccess platform. This data is processed and disseminated in Hierchical Data Format (.h5) files representiong 10x10 degrres tiles on the ground.
+    Nighttime lights (NTL) data measures how bright the Earth is in the dark using satellite sensors, Suomi NPP (SNPP), NOAA-20, and NOAA-21 a trio of weather and environmental satellites flying in the same polar orbit, spaced out like buses on a route so they scan every spot on Earth at roughly 1:30 AM and 1:30 PM local time. A polar orbit is a satellite path that loops vertically from the North Pole to the South Pole while the Earth spins sideways underneath it, allowing a single satellite to scan the entire planet like peeling an orange in vertical strips. As the satellites enter the range of Ground Satellite Processing Stations located close to poles the images are downlaoded and forwarded as well as processed further into products at the vendors data centeres. For the purpose of this study we will use monthly aggregates directky from NASA Eartaccess platform. This data is processed and disseminated in Hierchical Data Format (.h5) files representiong 10x10 degrees tiles on the ground.
     """)
+    return
+
+
+@app.cell
+def _(myanmar_bbox, os):
+    import earthaccess
+    import xarray as xr
+    import dask
+    import h5netcdf
+    import h5py
+    import pandas as pd
+    import rioxarray as rxr
+
+    def search_monthly_ntl(bbox: tuple, start_date: str, end_date: str) -> list:
+        """
+        Searches NASA's STAC/CMR API for VNP46A3 (Monthly Nighttime Lights) granules.
+
+        Parameters:
+        -----------
+        bbox : tuple
+            (min_longitude, min_latitude, max_longitude, max_latitude)
+        start_date : str
+            Start of the study period (e.g., "2023-01-01")
+        end_date : str
+            End of the study period (e.g., "2023-12-31")
+
+        Returns:
+        --------
+        list
+            A list of earthaccess granule objects representing the remote files.
+        """
+        # 1. Authenticate with NASA Earthdata
+        # 'netrc' strategy automatically looks for credentials in your system's ~/.netrc file.
+        # If it fails, you can fall back to earthaccess.login(strategy="interactive")
+        try:
+            earthaccess.login(strategy="netrc")
+        except Exception:
+            earthaccess.login(strategy="interactive")
+
+        # 2. Query the STAC/CMR endpoint
+        granules = earthaccess.search_data(
+            short_name="VNP46A3",
+            bounding_box=bbox,
+            temporal=(start_date, end_date)
+        )
+
+        print(f"Found {len(granules)} monthly NTL granules for the specified parameters.")
+
+        return granules
+
+    def download_and_assemble_ntl(
+        granules: list, 
+        download_dir: str, 
+        # CHANGED: The correct variable name for VNP46A3 (Monthly)
+        subdataset: str = "NearNadir_Composite_Snow_Free"
+    ) -> xr.Dataset:
+        """
+        Downloads STAC granules concurrently and stitches them spatially and temporally.
+        Uses rioxarray to seamlessly decode the proprietary NASA HDFEOS grid.
+        """
+        os.makedirs(download_dir, exist_ok=True)
+    
+        print(f"Downloading {len(granules)} granules to {download_dir}...")
+        local_paths = earthaccess.download(granules, local_path=download_dir)
+        valid_paths = [p for p in local_paths if p is not None and os.path.exists(p)]
+    
+        print(f"Successfully secured {len(valid_paths)} local files.")
+        print("Opening and geospatializing HDF5 tiles with rioxarray...")
+    
+        datasets = []
+        for path in valid_paths:
+            # 1. Extract date from filename (e.g., VNP46A3.A2023001.h27v06...)
+            filename = os.path.basename(path)
+            date_str = filename.split(".")[1][1:] # Extracts '2023001' (Year + Day of Year)
+        
+            # VNP46A3 monthly files use the 1st day of the month in their Julian date (e.g. 001 for Jan)
+            time_val = pd.to_datetime(date_str, format="%Y%j")
+        
+            # 2. Target the specific HDF5 subdataset using GDAL syntax
+            gdal_path = f'HDF5:"{path}"://HDFEOS/GRIDS/VNP_Grid_DNB/Data_Fields/{subdataset}'
+            gdal_path = f'HDF5:"{path}"://HDFEOS/GRIDS/VIIRS_Grid_DNB_2d/Data_Fields/{subdataset}'
+        
+            # 3. Open with rioxarray
+            # masked=True automatically applies NASA's fill values (e.g. 65535 -> NaN)
+            da = rxr.open_rasterio(gdal_path, masked=True)
+        
+            # 4. Inject the missing time dimension
+            da = da.expand_dims(time=[time_val])
+            da.name = "nightlights"
+        
+            datasets.append(da)
+        
+        print("Mosaicking spatial tiles and stacking over time...")
+        # combine_by_coords will now succeed
+        ds = xr.combine_by_coords(datasets, combine_attrs="override",)
+    
+        return ds
+
+    # ==========================================
+    # Example Usage:
+    # ==========================================
+
+    ntl_granules = search_monthly_ntl(
+        bbox=myanmar_bbox, 
+        start_date="2023-01-01", 
+        end_date="2024-01-01"
+    )
+
+    ntl_dataset = download_and_assemble_ntl(ntl_granules, download_dir='data/ntl')
     return
 
 
