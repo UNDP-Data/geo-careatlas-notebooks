@@ -136,7 +136,7 @@ def _(mo):
     mo.md(r"""
     - Nighttime lights
 
-    Night time lights data
+    Nighttime lights (NTL) data measures how bright the Earth is in the dark using satellite sensors, Suomi NPP (SNPP), NOAA-20, and NOAA-21 a trio of weather and environmental satellites flying in the same polar orbit, spaced out like buses on a route so they scan every spot on Earth at roughly 1:30 AM and 1:30 PM local time. A polar orbit is a satellite path that loops vertically from the North Pole to the South Pole while the Earth spins sideways underneath it, allowing a single satellite to scan the entire planet like peeling an orange in vertical strips. When the satellites enter the range of the polar satellite ground stations located clsoe to the poles the images are downloaded and processed further util they becomes products.  For the purpose of this work we wil use the monthly aggregates sources directly from NASA Earthaccess platform.
     """)
     return
 
