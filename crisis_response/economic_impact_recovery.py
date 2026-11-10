@@ -16,9 +16,11 @@ def _():
 def _(mo):
     mo.md(r"""
     # 📈 Early Economic Impact Recovery
+    ---
+
 
     ## 1. Background
-    ---
+
 
     ### 1.1 Context
     Every year, billions of dollars are spent on humanitarian assistance and early recovery following natural disasters and conflicts. Yet, because crises often destroy local statistical systems and make on-the-ground surveys dangerous or impossible, rigorous evidence on what these programs actually achieve remains incredibly sparse. Humanitarian actors, governments, and private investors need to know: <span style="padding:0px; background-color:#f0f0f0; color:red">*Did this intervention actually accelerate recovery? And what was the economic value of bringing that recovery forward?*</span>. <p>To bridge this evidence gap, we can look to space. Satellite Earth observation—specifically nighttime luminosity (nightlights) as well as surface reflections recorded under all weather conditions—allows us to track human activity and physical reconstruction independently, safely, and consistently every single month. By combining satellite data with the exact GPS locations of recovery projects, it is possible to estimate how quickly local economies bounce back.</p>
@@ -52,7 +54,7 @@ def _(mo):
 def _(mo):
     mo.md(r"""
     ## 2. Data
-    ---
+
 
     - Administrative boundaries
 
@@ -128,7 +130,7 @@ def _(mo):
     m = leafmap.Map()
     m.add_gdf(df, layer_name='admin')
     m
-    return myanmar_bbox, os
+    return download_dir, myanmar_bbox, os
 
 
 @app.cell(hide_code=True)
@@ -238,6 +240,158 @@ def _(myanmar_bbox, os):
     )
 
     ntl_dataset = download_and_assemble_ntl(ntl_granules, download_dir='/data/ntl')
+    return (pd,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    - UNDP project sites
+    """)
+    return
+
+
+@app.cell
+def _(download_dir, os, pd):
+    import requests
+    import time
+    from datetime import datetime
+    from typing import Union
+
+    # ─── API Configuration ───
+    SUMMARY_API = "https://api.open.undp.org/api/project_summary_{year}.json"
+    PROJECT_DETAIL_API = "https://api.open.undp.org/api/projects/{project_id}.json"
+    HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+    }
+    API_DELAY = 0.2  # Slightly increased to avoid rate limits
+
+    def scrape_undp_api_test(operating_unit, years, download_dir:str=None, verbose=True)-> Union[pd.DataFrame, None]:
+        """
+        Adjusted standalone scraper to test UNDP API extraction.
+        """
+        os.makedirs(download_dir, exist_ok=True)
+
+        file_name = f'UNDP_projects_{operating_unit}.csv'
+    
+        file_path = os.path.join(download_dir, file_name)
+        if os.path.exists(file_path):
+            print(f'Reading already downloaded local file {file_path}')
+            return pd.read_csv(file_path)
+
+    
+        all_projects = {}
+    
+        if verbose:
+            print(f"Scraping UNDP API for unit: {operating_unit}")
+            print(f"Years: {years}\n" + "-"*40)
+    
+        for year in years:
+            if verbose:
+                print(f"→ Scanning {year}...", end=" ", flush=True)
+        
+            try:
+                resp = requests.get(SUMMARY_API.format(year=year), headers=HEADERS, timeout=30)
+                if resp.status_code != 200:
+                    if verbose: print(f"HTTP {resp.status_code}")
+                    continue
+            
+                # Protection against HTML error pages masquerading as 200 OK
+                try:
+                    data = resp.json()
+                except ValueError:
+                    if verbose: print("Invalid JSON response")
+                    continue
+                
+                # Handle both list and dict structures just in case the API changes
+                if isinstance(data, dict):
+                    data = data.get('data', [])
+                
+                target = [p for p in data if p.get('operating_unit') == operating_unit]
+            
+                if verbose:
+                    print(f"found {len(target)} projects.", end=" ", flush=True)
+            
+                new_count = 0
+                for proj in target:
+                    p_id = proj.get('project_id') or proj.get('id')
+                    if not p_id or p_id in all_projects:
+                        continue
+                
+                    time.sleep(API_DELAY)
+                    try:
+                        d_resp = requests.get(
+                            PROJECT_DETAIL_API.format(project_id=p_id),
+                            headers=HEADERS, timeout=15
+                        )
+                        if d_resp.status_code != 200: continue
+                    
+                        details = d_resp.json()
+                    
+                        title = details.get('title') or details.get('project_title') or "No Title"
+                    
+                        # Robust description extraction
+                        desc_parts = [details.get('description', '') or details.get('project_descr', '')]
+                        for out in details.get('outputs', []):
+                            t, d = out.get('title', ''), out.get('descr', '')
+                            if t or d:
+                                desc_parts.append(f"[Output: {t} - {d}]")
+                            
+                        full_text = " || ".join([str(d) for d in desc_parts if d]).strip()
+                    
+                        start, end = details.get('start', ''), details.get('end', '')
+                    
+                        # Umbrella check
+                        is_umbrella = False
+                        if start:
+                            try:
+                                days = (datetime.now() - datetime.strptime(start, '%Y-%m-%d')).days
+                                if days > 1825:  # > 5 years
+                                    is_umbrella = True
+                            except (ValueError, TypeError):
+                                pass
+                    
+                        all_projects[p_id] = {
+                            'project_id': p_id,
+                            'title': title,
+                            'start_date': start,
+                            'end_date': end,
+                            'total_budget': details.get('budget', 0),
+                            'is_likely_umbrella': is_umbrella,
+                            'url': f"https://open.undp.org/projects/{p_id}",
+                            'description': full_text,
+                        }
+                        new_count += 1
+                    
+                    except Exception as e:
+                        if verbose: print(f"\n    Error fetching {p_id}: {e}")
+            
+                if verbose:
+                    print(f"({new_count} newly added)")
+        
+            except requests.exceptions.Timeout:
+                if verbose: print("TIMEOUT")
+            except Exception as e:
+                if verbose: print(f"ERROR: {e}")
+    
+        if all_projects:
+            df = pd.DataFrame(list(all_projects.values()))
+            df['start_date'] = pd.to_datetime(df['start_date'], errors='coerce')
+            df['total_budget'] = pd.to_numeric(df['total_budget'], errors='coerce')
+            df.to_csv(file_path)
+            return df
+    
+    
+
+    # ==========================================
+    # TEST EXECUTION FOR MYANMAR (MMR)
+    # ==========================================
+    # We use recent years to keep the test fast
+    test_years = [2023, 2024, 2025, 2026]
+    mmr_projects_df = scrape_undp_api_test(operating_unit="MMR", years=test_years, download_dir=download_dir)
+
+    # Display the results in Marimo
+    mmr_projects_df.head()
     return
 
 
@@ -245,7 +399,6 @@ def _(myanmar_bbox, os):
 def _(mo):
     mo.md(r"""
     ## 3. Geospatial Analysis
-    ---
     """)
     return
 
@@ -254,7 +407,6 @@ def _(mo):
 def _(mo):
     mo.md(r"""
     ## 4. Economic Analysis
-    ---
     """)
     return
 
