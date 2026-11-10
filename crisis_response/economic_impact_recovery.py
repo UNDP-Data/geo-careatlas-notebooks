@@ -69,22 +69,26 @@ def _(mo):
     import h3.api.basic_int as h3
     import leafmap
 
-    def fetch_admin_boundaries(bbox: tuple = None, admin_level: int = 0, iso3_country_code:str = None, dest_path:str=None, h3id_precision: int = 7) -> gpd.GeoDataFrame:
+    def fetch_admin_boundaries(bbox: tuple = None, admin_level: int = 0, iso3_country_code:str = None, download_dir:str=None, h3id_precision: int = 7) -> gpd.GeoDataFrame:
         """
         Fetches administrative boundaries via VSI using FlatGeobuf spatial indexing.
         Filters invalid ISO codes, calculates centroids, and maps H3 indices.
         """
 
+        os.makedirs(download_dir, exist_ok=True)
+        dest_path = os.path.join(download_dir, f'admin{admin_level}.fgb')
+
         if os.path.exists(dest_path):
-            print(f'reading alreday downloaded local file')
+            print(f'Reading already downloaded local file {dest_path}')
             return read_dataframe(dest_path)
 
 
         # 1. Fetch via VSI utilizing the FlatGeobuf spatial index
         url = f"/vsicurl/https://undpngddlsgeohubdev01.blob.core.windows.net/admin/cgaz/geoBoundariesCGAZ_ADM{admin_level}.fgb"
+
         where_clause = f"iso3 = '{iso3_country_code}'" if iso3_country_code else None
 
-        # engine="pyogrio" passes the bbox directly to the GDAL reader for high-speed streaming
+
         gdf = read_dataframe(url, bbox=bbox, where=where_clause)
         print(gdf.columns.tolist())
 
@@ -113,18 +117,17 @@ def _(mo):
     # we define Myanmar's boun ding box in geographic coordinates
     myanmar_bbox = west, south, east, north = 92.17, 9.53, 101.18, 28.55
     myanmar_iso3_country_code='MMR'
-    local_admin_path = '/tmp/admin2.fgb'
+    download_dir = '/tmp/data'
     df = None
     with mo.status.spinner(title="Downloading admin data ...") as _spinner:
-        df = fetch_admin_boundaries(admin_level=2, iso3_country_code=myanmar_iso3_country_code, dest_path=local_admin_path )
+        df = fetch_admin_boundaries(admin_level=2, iso3_country_code=myanmar_iso3_country_code, download_dir=download_dir )
         _spinner.update(f'Downlaoded {len(df)} districts')
         _spinner.update("Done")
-        
+
 
     m = leafmap.Map()
     m.add_gdf(df, layer_name='admin')
     m
-
     return
 
 
@@ -133,7 +136,7 @@ def _(mo):
     mo.md(r"""
     - Nighttime lights
 
-    Night time lights data
+    Nighttime lights (NTL) data measures how bright the Earth is in the dark using satellite sensors, Suomi NPP (SNPP), NOAA-20, and NOAA-21 a trio of weather and environmental satellites flying in the same polar orbit, spaced out like buses on a route so they scan every spot on Earth at roughly 1:30 AM and 1:30 PM local time. A polar orbit is a satellite path that loops vertically from the North Pole to the South Pole while the Earth spins sideways underneath it, allowing a single satellite to scan the entire planet like peeling an orange in vertical strips. As the satellites enter the range of Ground Satellite Processing Stations located close to poles the images are downlaoded and forwarded as well as processed further into products at the vendors data centeres. For the purpose of this study we will use monthly aggregates directky from NASA Eartaccess platform. This data is processed and disseminated in Hierchical Data Format (.h5) files representiong 10x10 degrres tiles on the ground.
     """)
     return
 
