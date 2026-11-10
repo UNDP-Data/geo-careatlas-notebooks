@@ -16,9 +16,11 @@ def _():
 def _(mo):
     mo.md(r"""
     # 📈 Early Economic Impact Recovery
+    ---
+
 
     ## 1. Background
-    ---
+
 
     ### 1.1 Context
     Every year, billions of dollars are spent on humanitarian assistance and early recovery following natural disasters and conflicts. Yet, because crises often destroy local statistical systems and make on-the-ground surveys dangerous or impossible, rigorous evidence on what these programs actually achieve remains incredibly sparse. Humanitarian actors, governments, and private investors need to know: <span style="padding:0px; background-color:#f0f0f0; color:red">*Did this intervention actually accelerate recovery? And what was the economic value of bringing that recovery forward?*</span>. <p>To bridge this evidence gap, we can look to space. Satellite Earth observation—specifically nighttime luminosity (nightlights) as well as surface reflections recorded under all weather conditions—allows us to track human activity and physical reconstruction independently, safely, and consistently every single month. By combining satellite data with the exact GPS locations of recovery projects, it is possible to estimate how quickly local economies bounce back.</p>
@@ -52,7 +54,7 @@ def _(mo):
 def _(mo):
     mo.md(r"""
     ## 2. Data
-    ---
+
 
     - Administrative boundaries
 
@@ -128,7 +130,7 @@ def _(mo):
     m = leafmap.Map()
     m.add_gdf(df, layer_name='admin')
     m
-    return myanmar_bbox, os
+    return download_dir, myanmar_bbox, os
 
 
 @app.cell(hide_code=True)
@@ -150,6 +152,9 @@ def _(myanmar_bbox, os):
     import h5py
     import pandas as pd
     import rioxarray as rxr
+    from dask.diagnostics import ProgressBar
+    from urllib.parse import urlparse
+    import rasterio
 
     def search_monthly_ntl(bbox: tuple, start_date: str, end_date: str) -> list:
         """
@@ -199,42 +204,30 @@ def _(myanmar_bbox, os):
         Uses rioxarray to seamlessly decode the proprietary NASA HDFEOS grid.
         """
         os.makedirs(download_dir, exist_ok=True)
-    
-        print(f"Downloading {len(granules)} granules to {download_dir}...")
-        local_paths = earthaccess.download(granules, local_path=download_dir)
-        valid_paths = [p for p in local_paths if p is not None and os.path.exists(p)]
-    
+
+        granules_to_download = list()
+        downloaded_files = list()
+        for g in granules:
+            link = g.data_links()[0]
+            plink = urlparse(link)
+            *_, file_name = str(plink.path).split('/')
+            local_file = os.path.join(download_dir, file_name)
+            if os.path.exists(local_file):
+                with rasterio.open(local_file) as _:
+                    downloaded_files.append(local_file)
+                    continue
+            granules_to_download.append(g)
+        
+        if granules_to_download:
+            print(f"Downloading {len(granules_to_download)} granules to {download_dir}...")
+            local_paths = earthaccess.download(granules, local_path=download_dir, show_progress=True)
+            valid_paths = [p for p in local_paths if p is not None and os.path.exists(p)]
+            valid_paths+=downloaded_files
+        else:
+            valid_paths = downloaded_files
         print(f"Successfully secured {len(valid_paths)} local files.")
-        print("Opening and geospatializing HDF5 tiles with rioxarray...")
-    
-        datasets = []
-        for path in valid_paths:
-            # 1. Extract date from filename (e.g., VNP46A3.A2023001.h27v06...)
-            filename = os.path.basename(path)
-            date_str = filename.split(".")[1][1:] # Extracts '2023001' (Year + Day of Year)
-        
-            # VNP46A3 monthly files use the 1st day of the month in their Julian date (e.g. 001 for Jan)
-            time_val = pd.to_datetime(date_str, format="%Y%j")
-        
-            # 2. Target the specific HDF5 subdataset using GDAL syntax
-            gdal_path = f'HDF5:"{path}"://HDFEOS/GRIDS/VNP_Grid_DNB/Data_Fields/{subdataset}'
-            gdal_path = f'HDF5:"{path}"://HDFEOS/GRIDS/VIIRS_Grid_DNB_2d/Data_Fields/{subdataset}'
-        
-            # 3. Open with rioxarray
-            # masked=True automatically applies NASA's fill values (e.g. 65535 -> NaN)
-            da = rxr.open_rasterio(gdal_path, masked=True)
-        
-            # 4. Inject the missing time dimension
-            da = da.expand_dims(time=[time_val])
-            da.name = "nightlights"
-        
-            datasets.append(da)
-        
-        print("Mosaicking spatial tiles and stacking over time...")
-        # combine_by_coords will now succeed
-        ds = xr.combine_by_coords(datasets, combine_attrs="override",)
-    
-        return ds
+        return valid_paths
+
 
     # ==========================================
     # Example Usage:
@@ -246,7 +239,170 @@ def _(myanmar_bbox, os):
         end_date="2024-01-01"
     )
 
-    ntl_dataset = download_and_assemble_ntl(ntl_granules, download_dir='data/ntl')
+    ntl_dataset = download_and_assemble_ntl(ntl_granules, download_dir='/data/ntl')
+    return (pd,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    - UNDP project sites
+    """)
+    return
+
+
+@app.cell
+def _(download_dir, os, pd):
+    import requests
+    import time
+    from datetime import datetime
+    from typing import Union
+
+    # ─── API Configuration ───
+    SUMMARY_API = "https://api.open.undp.org/api/project_summary_{year}.json"
+    PROJECT_DETAIL_API = "https://api.open.undp.org/api/projects/{project_id}.json"
+    HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+    }
+    API_DELAY = 0.2  # Slightly increased to avoid rate limits
+
+    def scrape_undp_api_test(operating_unit, years, download_dir:str=None, verbose=True)-> Union[pd.DataFrame, None]:
+        """
+        Adjusted standalone scraper to test UNDP API extraction.
+        """
+        os.makedirs(download_dir, exist_ok=True)
+
+        file_name = f'UNDP_projects_{operating_unit}.csv'
+    
+        file_path = os.path.join(download_dir, file_name)
+        # if os.path.exists(file_path):
+        #     print(f'Reading already downloaded local file {file_path}')
+        #     return pd.read_csv(file_path)
+
+    
+        all_projects = {}
+    
+        if verbose:
+            print(f"Scraping UNDP API for unit: {operating_unit}")
+            print(f"Years: {years}\n" + "-"*40)
+    
+        for year in years:
+            if verbose:
+                print(f"→ Scanning {year}...", end=" ", flush=True)
+        
+            try:
+                resp = requests.get(SUMMARY_API.format(year=year), headers=HEADERS, timeout=30)
+                if resp.status_code != 200:
+                    if verbose: print(f"HTTP {resp.status_code}")
+                    continue
+            
+                # Protection against HTML error pages masquerading as 200 OK
+                try:
+                    data = resp.json()
+                except ValueError:
+                    if verbose: print("Invalid JSON response")
+                    continue
+                
+                # Handle both list and dict structures just in case the API changes
+                if isinstance(data, dict):
+                    data = data.get('data', [])
+                
+                target = [p for p in data if p.get('operating_unit') == operating_unit]
+            
+                if verbose:
+                    print(f"found {len(target)} projects.", end=" ", flush=True)
+            
+                new_count = 0
+                for proj in target:
+                    p_id = proj.get('project_id') or proj.get('id')
+                    if not p_id or p_id in all_projects:
+                        continue
+                
+                    time.sleep(API_DELAY)
+                    try:
+                        d_resp = requests.get(
+                            PROJECT_DETAIL_API.format(project_id=p_id),
+                            headers=HEADERS, timeout=15
+                        )
+                        if d_resp.status_code != 200: continue
+                    
+                        details = d_resp.json()
+                    
+                        title = details.get('title') or details.get('project_title') or "No Title"
+                        subnational = details.get('subnational', [])
+                        lats, lons = [], []
+                        for sout in subnational:
+                            if 'lat' in sout and 'lon' in sout:
+                                lons.append(sout['lon'])
+                                lats.append(sout['lat'])
+                        lat = set(lats)
+                        lon = set(lons)
+                        print(p_id, lon, lat)
+                        continue
+                        
+                    
+                        # Robust description extraction
+                        desc_parts = [details.get('description', '') or details.get('project_descr', '')]
+                        for out in details.get('outputs', []):
+                            t, d = out.get('title', ''), out.get('descr', '')
+                            if t or d:
+                                desc_parts.append(f"[Output: {t} - {d}]")
+                            
+                        full_text = " || ".join([str(d) for d in desc_parts if d]).strip()
+                    
+                        start, end = details.get('start', ''), details.get('end', '')
+                    
+                        # Umbrella check
+                        is_umbrella = False
+                        if start:
+                            try:
+                                days = (datetime.now() - datetime.strptime(start, '%Y-%m-%d')).days
+                                if days > 1825:  # > 5 years
+                                    is_umbrella = True
+                            except (ValueError, TypeError):
+                                pass
+                    
+                        all_projects[p_id] = {
+                            'project_id': p_id,
+                            'title': title,
+                            'start_date': start,
+                            'end_date': end,
+                            'total_budget': details.get('budget', 0),
+                            'is_likely_umbrella': is_umbrella,
+                            'url': f"https://open.undp.org/projects/{p_id}",
+                            'description': full_text,
+                        }
+                        new_count += 1
+                    
+                    except Exception as e:
+                        if verbose: print(f"\n    Error fetching {p_id}: {e}")
+            
+                if verbose:
+                    print(f"({new_count} newly added)")
+        
+            except requests.exceptions.Timeout:
+                if verbose: print("TIMEOUT")
+            except Exception as e:
+                if verbose: print(f"ERROR: {e}")
+    
+        if all_projects:
+            df = pd.DataFrame(list(all_projects.values()))
+            df['start_date'] = pd.to_datetime(df['start_date'], errors='coerce')
+            df['total_budget'] = pd.to_numeric(df['total_budget'], errors='coerce')
+            df.to_csv(file_path)
+            return df
+    
+    
+
+    # ==========================================
+    # TEST EXECUTION FOR MYANMAR (MMR)
+    # ==========================================
+    # We use recent years to keep the test fast
+    test_years = [2024, 2025, 2026]
+    mmr_projects_df = scrape_undp_api_test(operating_unit="MMR", years=test_years, download_dir=download_dir)
+
+    # Display the results in Marimo
+    mmr_projects_df.head()
     return
 
 
@@ -254,7 +410,6 @@ def _(myanmar_bbox, os):
 def _(mo):
     mo.md(r"""
     ## 3. Geospatial Analysis
-    ---
     """)
     return
 
@@ -263,7 +418,6 @@ def _(mo):
 def _(mo):
     mo.md(r"""
     ## 4. Economic Analysis
-    ---
     """)
     return
 
