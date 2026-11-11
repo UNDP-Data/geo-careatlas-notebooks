@@ -174,14 +174,7 @@ def _(myanmar_bbox, os):
         list
             A list of earthaccess granule objects representing the remote files.
         """
-        # 1. Authenticate with NASA Earthdata
-        # 'netrc' strategy automatically looks for credentials in your system's ~/.netrc file.
-        # If it fails, you can fall back to earthaccess.login(strategy="interactive")
-        try:
-            earthaccess.login(strategy="netrc")
-        except Exception:
-            earthaccess.login(strategy="interactive")
-
+    
         # 2. Query the STAC/CMR endpoint
         granules = earthaccess.search_data(
             short_name="VNP46A3",
@@ -200,8 +193,7 @@ def _(myanmar_bbox, os):
         subdataset: str = "NearNadir_Composite_Snow_Free"
     ) -> xr.Dataset:
         """
-        Downloads STAC granules concurrently and stitches them spatially and temporally.
-        Uses rioxarray to seamlessly decode the proprietary NASA HDFEOS grid.
+        Downloads STAC granules concurrently
         """
         os.makedirs(download_dir, exist_ok=True)
 
@@ -217,9 +209,17 @@ def _(myanmar_bbox, os):
                     downloaded_files.append(local_file)
                     continue
             granules_to_download.append(g)
-        
+    
         if granules_to_download:
             print(f"Downloading {len(granules_to_download)} granules to {download_dir}...")
+            # 1. Authenticate with NASA Earthdata
+            # 'netrc' strategy automatically looks for credentials in your system's ~/.netrc file.
+            # If it fails, you can fall back to earthaccess.login(strategy="interactive")
+            # try:
+            #     earthaccess.login(strategy="netrc")
+            # except Exception:
+            #     earthaccess.login(strategy="interactive")
+
             local_paths = earthaccess.download(granules, local_path=download_dir, show_progress=True)
             valid_paths = [p for p in local_paths if p is not None and os.path.exists(p)]
             valid_paths+=downloaded_files
@@ -273,51 +273,51 @@ def _(download_dir, os, pd):
         os.makedirs(download_dir, exist_ok=True)
 
         file_name = f'UNDP_projects_{operating_unit}.csv'
-    
+
         file_path = os.path.join(download_dir, file_name)
         # if os.path.exists(file_path):
         #     print(f'Reading already downloaded local file {file_path}')
         #     return pd.read_csv(file_path)
 
-    
+
         all_projects = {}
-    
+
         if verbose:
             print(f"Scraping UNDP API for unit: {operating_unit}")
             print(f"Years: {years}\n" + "-"*40)
-    
+
         for year in years:
             if verbose:
                 print(f"→ Scanning {year}...", end=" ", flush=True)
-        
+    
             try:
                 resp = requests.get(SUMMARY_API.format(year=year), headers=HEADERS, timeout=30)
                 if resp.status_code != 200:
                     if verbose: print(f"HTTP {resp.status_code}")
                     continue
-            
+        
                 # Protection against HTML error pages masquerading as 200 OK
                 try:
                     data = resp.json()
                 except ValueError:
                     if verbose: print("Invalid JSON response")
                     continue
-                
+            
                 # Handle both list and dict structures just in case the API changes
                 if isinstance(data, dict):
                     data = data.get('data', [])
-                
-                target = [p for p in data if p.get('operating_unit') == operating_unit]
             
+                target = [p for p in data if p.get('operating_unit') == operating_unit]
+        
                 if verbose:
                     print(f"found {len(target)} projects.", end=" ", flush=True)
-            
+        
                 new_count = 0
                 for proj in target:
                     p_id = proj.get('project_id') or proj.get('id')
                     if not p_id or p_id in all_projects:
                         continue
-                
+            
                     time.sleep(API_DELAY)
                     try:
                         d_resp = requests.get(
@@ -325,9 +325,9 @@ def _(download_dir, os, pd):
                             headers=HEADERS, timeout=15
                         )
                         if d_resp.status_code != 200: continue
-                    
+                
                         details = d_resp.json()
-                    
+                
                         title = details.get('title') or details.get('project_title') or "No Title"
                         subnational = details.get('subnational', [])
                         lats, lons = [], []
@@ -338,20 +338,20 @@ def _(download_dir, os, pd):
                         lat = set(lats)
                         lon = set(lons)
                         print(p_id, lon, lat)
-                        continue
-                        
+                        #continue
                     
+                
                         # Robust description extraction
                         desc_parts = [details.get('description', '') or details.get('project_descr', '')]
                         for out in details.get('outputs', []):
                             t, d = out.get('title', ''), out.get('descr', '')
                             if t or d:
                                 desc_parts.append(f"[Output: {t} - {d}]")
-                            
+                        
                         full_text = " || ".join([str(d) for d in desc_parts if d]).strip()
-                    
+                
                         start, end = details.get('start', ''), details.get('end', '')
-                    
+                
                         # Umbrella check
                         is_umbrella = False
                         if start:
@@ -361,7 +361,7 @@ def _(download_dir, os, pd):
                                     is_umbrella = True
                             except (ValueError, TypeError):
                                 pass
-                    
+                
                         all_projects[p_id] = {
                             'project_id': p_id,
                             'title': title,
@@ -373,26 +373,26 @@ def _(download_dir, os, pd):
                             'description': full_text,
                         }
                         new_count += 1
-                    
+                
                     except Exception as e:
                         if verbose: print(f"\n    Error fetching {p_id}: {e}")
-            
+        
                 if verbose:
                     print(f"({new_count} newly added)")
-        
+    
             except requests.exceptions.Timeout:
                 if verbose: print("TIMEOUT")
             except Exception as e:
                 if verbose: print(f"ERROR: {e}")
-    
+
         if all_projects:
             df = pd.DataFrame(list(all_projects.values()))
             df['start_date'] = pd.to_datetime(df['start_date'], errors='coerce')
             df['total_budget'] = pd.to_numeric(df['total_budget'], errors='coerce')
             df.to_csv(file_path)
             return df
-    
-    
+
+
 
     # ==========================================
     # TEST EXECUTION FOR MYANMAR (MMR)
