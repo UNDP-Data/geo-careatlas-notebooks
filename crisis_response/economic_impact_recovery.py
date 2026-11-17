@@ -130,7 +130,7 @@ def _(mo):
     m = leafmap.Map()
     m.add_gdf(admin_df, layer_name='admin')
     m
-    return admin_df, myanmar_bbox, myanmar_iso3_country_code, os
+    return admin_df, gpd, leafmap, myanmar_bbox, myanmar_iso3_country_code, os
 
 
 @app.cell(hide_code=True)
@@ -252,7 +252,7 @@ def _(mo):
 
 
 @app.cell
-def _(Path, admin_df, myanmar_iso3_country_code, pd):
+def _(Path, admin_df, gpd, myanmar_iso3_country_code, pd):
     import requests
     import time
     from datetime import datetime
@@ -451,7 +451,12 @@ def _(Path, admin_df, myanmar_iso3_country_code, pd):
             print(f"    - Projects file: {proj_file} ({len(df_projects)} records)")
             print(f"    - Sites file:    {sites_file} ({len(df_sites)} records)")
 
-        return df_projects, df_sites
+        gdf_sites = gpd.GeoDataFrame(
+        df_sites,
+        geometry=gpd.points_from_xy(df_sites['lon'], df_sites['lat']),
+        crs="EPSG:4326"
+        )
+        return df_projects, gdf_sites
 
 
 
@@ -463,8 +468,30 @@ def _(Path, admin_df, myanmar_iso3_country_code, pd):
 
     projects, sites = scrape_undp_api(target_iso3=myanmar_iso3_country_code, years=[2024,2025], download_dir=None)
 
+    mean_lat = sites.geometry.y.mean()
+    mean_lon = sites.geometry.x.mean()
     # Display the results in Marimo
     sites.head()
+
+    return (sites,)
+
+
+@app.cell
+def _(admin_df, leafmap, sites):
+    m1 = leafmap.Map()
+    m1.add_gdf(admin_df, layer_name='admin')
+    m1.add_circle_markers_from_xy(
+        sites,
+        x='lon',
+        y='lat',
+        radius=1,
+        color='red',
+        fill_color='black',
+        fill_opacity=0.0,
+        layer_name='UNDP Sites',
+        popup=['site_name', 'output_title'],
+    )
+    m1
     return
 
 
