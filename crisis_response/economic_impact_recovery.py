@@ -120,17 +120,17 @@ def _(mo):
     myanmar_bbox = west, south, east, north = 92.17, 9.53, 101.18, 28.55
     myanmar_iso3_country_code='MMR'
     download_dir = '/data/'
-    df = None
+    admin_df = None
     with mo.status.spinner(title="Downloading admin data ...") as _spinner:
-        df = fetch_admin_boundaries(admin_level=2, iso3_country_code=myanmar_iso3_country_code, download_dir=download_dir )
-        _spinner.update(f'Downlaoded {len(df)} districts')
+        admin_df = fetch_admin_boundaries(admin_level=2, iso3_country_code=myanmar_iso3_country_code, download_dir=download_dir )
+        _spinner.update(f'Downlaoded {len(admin_df)} districts')
         _spinner.update("Done")
 
 
     m = leafmap.Map()
-    m.add_gdf(df, layer_name='admin')
+    m.add_gdf(admin_df, layer_name='admin')
     m
-    return download_dir, myanmar_bbox, os
+    return admin_df, myanmar_bbox, myanmar_iso3_country_code, os
 
 
 @app.cell(hide_code=True)
@@ -174,7 +174,7 @@ def _(myanmar_bbox, os):
         list
             A list of earthaccess granule objects representing the remote files.
         """
-    
+
         # 2. Query the STAC/CMR endpoint
         granules = earthaccess.search_data(
             short_name="VNP46A3",
@@ -209,7 +209,7 @@ def _(myanmar_bbox, os):
                     downloaded_files.append(local_file)
                     continue
             granules_to_download.append(g)
-    
+
         if granules_to_download:
             print(f"Downloading {len(granules_to_download)} granules to {download_dir}...")
             # 1. Authenticate with NASA Earthdata
@@ -252,11 +252,12 @@ def _(mo):
 
 
 @app.cell
-def _(download_dir, os, pd):
+def _(Path, admin_df, myanmar_iso3_country_code, pd):
     import requests
     import time
     from datetime import datetime
     from typing import Union
+    from shapely.geometry import Point
 
     # ─── API Configuration ───
     SUMMARY_API = "https://api.open.undp.org/api/project_summary_{year}.json"
@@ -266,131 +267,192 @@ def _(download_dir, os, pd):
     }
     API_DELAY = 0.2  # Slightly increased to avoid rate limits
 
-    def scrape_undp_api_test(operating_unit, years, download_dir:str=None, verbose=True)-> Union[pd.DataFrame, None]:
+    def scrape_undp_api(admin_df=admin_df, target_iso3:str=None, years=None, download_dir=None):
         """
-        Adjusted standalone scraper to test UNDP API extraction.
+        Crawls global/local UNDP projects, filters for a list of target years,
+        extracts each year's financial allocations, and maps clean sites inside admin_df boundaries.
         """
-        os.makedirs(download_dir, exist_ok=True)
-
-        file_name = f'UNDP_projects_{operating_unit}.csv'
-
-        file_path = os.path.join(download_dir, file_name)
-        # if os.path.exists(file_path):
-        #     print(f'Reading already downloaded local file {file_path}')
-        #     return pd.read_csv(file_path)
+        target_iso3 = target_iso3.upper()
 
 
-        all_projects = {}
+        if isinstance(years, int):
+            years = [years]
 
-        if verbose:
-            print(f"Scraping UNDP API for unit: {operating_unit}")
-            print(f"Years: {years}\n" + "-"*40)
+        print(f"\n{'=' * 70}")
+        print(f"  UNDP MULTI-YEAR EXTRACTION: [{target_iso3}] for Years {years}")
+        print(f"{'=' * 70}\n")
 
-        for year in years:
-            if verbose:
-                print(f"→ Scanning {year}...", end=" ", flush=True)
-    
+        all_confirmed_projects = {}
+        all_sites = []
+
+        for target_year in years:
+            print(f"\n  → Processing Year {target_year}...")
+
+            # ── STEP 1: Scan target year summary ─────────────────────────────────────
+            print(f"    Fetching global summary index for {target_year}...", end=" ", flush=True)
             try:
-                resp = requests.get(SUMMARY_API.format(year=year), headers=HEADERS, timeout=30)
+                resp = requests.get(SUMMARY_API.format(year=target_year), headers=HEADERS, timeout=30)
                 if resp.status_code != 200:
-                    if verbose: print(f"HTTP {resp.status_code}")
+                    print(f"Failed with HTTP {resp.status_code}")
                     continue
-        
-                # Protection against HTML error pages masquerading as 200 OK
-                try:
-                    data = resp.json()
-                except ValueError:
-                    if verbose: print("Invalid JSON response")
-                    continue
-            
-                # Handle both list and dict structures just in case the API changes
+                data = resp.json()
                 if isinstance(data, dict):
                     data = data.get('data', [])
-            
-                target = [p for p in data if p.get('operating_unit') == operating_unit]
-        
-                if verbose:
-                    print(f"found {len(target)} projects.", end=" ", flush=True)
-        
-                new_count = 0
-                for proj in target:
-                    p_id = proj.get('project_id') or proj.get('id')
-                    if not p_id or p_id in all_projects:
-                        continue
-            
-                    time.sleep(API_DELAY)
-                    try:
-                        d_resp = requests.get(
-                            PROJECT_DETAIL_API.format(project_id=p_id),
-                            headers=HEADERS, timeout=15
-                        )
-                        if d_resp.status_code != 200: continue
-                
-                        details = d_resp.json()
-                
-                        title = details.get('title') or details.get('project_title') or "No Title"
-                        subnational = details.get('subnational', [])
-                        lats, lons = [], []
-                        for sout in subnational:
-                            if 'lat' in sout and 'lon' in sout:
-                                lons.append(sout['lon'])
-                                lats.append(sout['lat'])
-                        lat = set(lats)
-                        lon = set(lons)
-                        print(p_id, lon, lat)
-                        #continue
-                    
-                
-                        # Robust description extraction
-                        desc_parts = [details.get('description', '') or details.get('project_descr', '')]
-                        for out in details.get('outputs', []):
-                            t, d = out.get('title', ''), out.get('descr', '')
-                            if t or d:
-                                desc_parts.append(f"[Output: {t} - {d}]")
-                        
-                        full_text = " || ".join([str(d) for d in desc_parts if d]).strip()
-                
-                        start, end = details.get('start', ''), details.get('end', '')
-                
-                        # Umbrella check
-                        is_umbrella = False
-                        if start:
-                            try:
-                                days = (datetime.now() - datetime.strptime(start, '%Y-%m-%d')).days
-                                if days > 1825:  # > 5 years
-                                    is_umbrella = True
-                            except (ValueError, TypeError):
-                                pass
-                
-                        all_projects[p_id] = {
-                            'project_id': p_id,
-                            'title': title,
-                            'start_date': start,
-                            'end_date': end,
-                            'total_budget': details.get('budget', 0),
-                            'is_likely_umbrella': is_umbrella,
-                            'url': f"https://open.undp.org/projects/{p_id}",
-                            'description': full_text,
-                        }
-                        new_count += 1
-                
-                    except Exception as e:
-                        if verbose: print(f"\n    Error fetching {p_id}: {e}")
-        
-                if verbose:
-                    print(f"({new_count} newly added)")
-    
-            except requests.exceptions.Timeout:
-                if verbose: print("TIMEOUT")
             except Exception as e:
-                if verbose: print(f"ERROR: {e}")
+                print(f"ERROR: {e}")
+                continue
 
-        if all_projects:
-            df = pd.DataFrame(list(all_projects.values()))
-            df['start_date'] = pd.to_datetime(df['start_date'], errors='coerce')
-            df['total_budget'] = pd.to_numeric(df['total_budget'], errors='coerce')
-            df.to_csv(file_path)
-            return df
+            candidate_pids = set()
+            for proj in data:
+                p_id = str(proj.get('project_id') or proj.get('id'))
+                if not p_id:
+                    continue
+                ou = str(proj.get('operating_unit', '')).upper()
+                region = str(proj.get('region_id', '')).upper()
+
+                # Keep direct country matches OR global/regional facilities
+                if ou == target_iso3 or region == "GLOBAL" or ou in ["H71", "HQ", "RBAP"]:
+                    candidate_pids.add(p_id)
+
+            print(f"found {len(candidate_pids)} candidate projects.")
+
+            # ── STEP 2: Inspect details & pull single-year financial arrays ──────────
+            for idx, p_id in enumerate(sorted(candidate_pids), 1):
+                time.sleep(API_DELAY)
+                try:
+                    d_resp = requests.get(PROJECT_DETAIL_API.format(project_id=p_id), headers=HEADERS, timeout=15)
+                    if d_resp.status_code != 200:
+                        continue
+                    details = d_resp.json()
+
+                    ou = str(details.get('operating_unit_id') or details.get('operating_unit', '')).upper()
+                    title = details.get('project_title') or details.get('title') or "No Title"
+
+                    # Check subnational locations for intersection with admin_df boundaries
+                    subnational = details.get('subnational', [])
+                    country_sites = []
+
+                    for loc in subnational:
+                        lat = pd.to_numeric(loc.get('lat'), errors='coerce')
+                        lon = pd.to_numeric(loc.get('lon'), errors='coerce')
+                        if pd.isna(lat) or pd.isna(lon):
+                            continue
+                        match_mask = admin_df.geometry.contains(Point(lon, lat))
+                        matched_polygons = admin_df[match_mask]
+                        if len(matched_polygons) > 0:
+                            country_sites.append({
+                                'lat': lat,
+                                'lon': lon,
+                                'name': loc.get('name', ''),
+                                'type': loc.get('type', ''),
+                                'outputID': str(loc.get('outputID', ''))
+                            })
+
+                    is_direct = (ou == target_iso3)
+                    if not is_direct and not country_sites:
+                        continue  # Skip global projects with zero presence in target country
+
+                    # ── Extract EXACT Single-Year Budget from Outputs ────────────────
+                    project_year_budget = 0.0
+                    project_year_expenditure = 0.0
+                    outputs_map = {}
+
+                    for out in details.get('outputs', []):
+                        o_id = str(out.get('output_id', ''))
+                        o_title = out.get('output_title') or out.get('title', '')
+
+                        # Check fiscal years array inside the output
+                        f_years = [int(y) for y in out.get('fiscal_year', []) if str(y).isdigit()]
+                        budgets = [float(b or 0) for b in out.get('budget', [])]
+                        exps = [float(e or 0) for e in out.get('expenditure', [])]
+
+                        # Map yearly breakdown for target year
+                        year_b, year_e = 0.0, 0.0
+                        for y, b, e in zip(f_years, budgets, exps):
+                            if y == target_year:
+                                year_b += b
+                                year_e += e
+
+                        project_year_budget += year_b
+                        project_year_expenditure += year_e
+
+                        outputs_map[o_id] = {
+                            'output_title': o_title,
+                            'year_budget': year_b,
+                            'year_expenditure': year_e
+                        }
+
+                    # If project had no financial activity in this target year, skip it
+                    if project_year_budget == 0.0 and project_year_expenditure == 0.0:
+                        continue
+
+                    # Unique compound key per project-year to aggregate across loops
+                    proj_year_key = f"{p_id}_{target_year}"
+                    all_confirmed_projects[proj_year_key] = {
+                        'project_id': p_id,
+                        'year': target_year,
+                        'title': title,
+                        'operating_unit': ou,
+                        'is_global_umbrella': not is_direct,
+                        'budget': project_year_budget,
+                        'expenditure': project_year_expenditure,
+                        'url': f"https://open.undp.org/projects/{p_id}"
+                    }
+
+                    # Process and apportion site-level budgets for this specific year
+                    loc_df = pd.DataFrame(country_sites)
+                    if not loc_df.empty:
+                        loc_df = loc_df.drop_duplicates(subset=['outputID', 'lat', 'lon'])
+                        loc_counts = loc_df.groupby('outputID').size().to_dict()
+
+                        for _, loc in loc_df.iterrows():
+                            o_id = loc['outputID']
+                            out_info = outputs_map.get(o_id, {})
+                            n_sites = loc_counts.get(o_id, 1)
+
+                            out_yr_budget = out_info.get('year_budget', 0.0)
+                            out_yr_exp = out_info.get('year_expenditure', 0.0)
+
+                            all_sites.append({
+                                'project_id': p_id,
+                                'year': target_year,
+                                'output_id': o_id,
+                                'project_title': title,
+                                'output_title': out_info.get('output_title', ''),
+                                'site_name': loc['name'],
+                                'lat': loc['lat'],
+                                'lon': loc['lon'],
+                                'loc_type': loc['type'],
+                                'is_global_project': not is_direct,
+                                'site_budget': out_yr_budget / n_sites,
+                                'site_expenditure': out_yr_exp / n_sites,
+                            })
+
+                except Exception as e:
+                    continue
+
+        df_projects = pd.DataFrame(list(all_confirmed_projects.values()))
+        df_sites = pd.DataFrame(all_sites)
+
+        # ── STEP 3: Save results neatly ──────────────────────────────────────────
+        if download_dir and not df_projects.empty:
+            out_path = Path(download_dir)
+            out_path.mkdir(parents=True, exist_ok=True)
+
+            years_str = f"{min(years)}_{max(years)}" if len(years) > 1 else str(years[0])
+            proj_file = out_path / f"UNDP_projects_{target_iso3}_{years_str}.csv"
+            sites_file = out_path / f"UNDP_sites_{target_iso3}_{years_str}.csv"
+
+            df_projects.to_csv(proj_file, index=False)
+            if not df_sites.empty:
+                df_sites.to_csv(sites_file, index=False)
+
+            print(f"\n  ✓ SUCCESS: Exported multi-year panel datasets for years {years}")
+            print(f"    - Projects file: {proj_file} ({len(df_projects)} records)")
+            print(f"    - Sites file:    {sites_file} ({len(df_sites)} records)")
+
+        return df_projects, df_sites
+
 
 
 
@@ -398,11 +460,11 @@ def _(download_dir, os, pd):
     # TEST EXECUTION FOR MYANMAR (MMR)
     # ==========================================
     # We use recent years to keep the test fast
-    test_years = [2024, 2025, 2026]
-    mmr_projects_df = scrape_undp_api_test(operating_unit="MMR", years=test_years, download_dir=download_dir)
+
+    projects, sites = scrape_undp_api(target_iso3=myanmar_iso3_country_code, years=[2024,2025], download_dir=None)
 
     # Display the results in Marimo
-    mmr_projects_df.head()
+    sites.head()
     return
 
 
