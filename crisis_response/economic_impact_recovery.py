@@ -472,7 +472,6 @@ def _(Path, admin_df, gpd, myanmar_iso3_country_code, pd):
     mean_lon = sites.geometry.x.mean()
     # Display the results in Marimo
     sites.head()
-
     return (sites,)
 
 
@@ -492,7 +491,7 @@ def _(admin_df, leafmap, sites):
         popup=['site_name', 'output_title'],
     )
     m1
-    return
+    return (m1,)
 
 
 @app.cell(hide_code=True)
@@ -508,6 +507,12 @@ def _(mo):
     mo.md(r"""
     ## 4. Economic Analysis
     """)
+    return
+
+
+@app.cell
+def _(m1):
+    print(m1.__class__)
     return
 
 
